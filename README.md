@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>✨ Lumina Event Genie AI</h1>
+  <h1>✨ Smart Event Assistant</h1>
   <p><strong>A Next-Generation, AI-Powered Smart Event Assistant</strong></p>
   <p>Seamlessly plan, visualize, and budget your dream events using the power of Google Gemini AI and WebXR.</p>
 </div>
