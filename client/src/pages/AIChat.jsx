@@ -97,11 +97,16 @@ const AIChat = ({ onTryInAR }) => {
         responseText = data.reply;
       } else {
         console.error('❌ Unexpected backend response:', data);
-        responseText = data.error || data.reply || "Sorry, I couldn't generate a response. Please try again.";
+        const backendMessage = data.error || data.reply || '';
+        if (/unavailable|not initialized|api key|rate limit|network/i.test(backendMessage)) {
+          responseText = `AI service is temporarily unavailable. Here are curated ideas:\n\n${getMockResponse(userMessage)}`;
+        } else {
+          responseText = backendMessage || "Sorry, I couldn't generate a response. Please try again.";
+        }
       }
     } catch (error) {
       console.error('❌ Chat API error:', error);
-      responseText = "Sorry, I couldn't connect to the AI service. Please check if the backend is running.";
+      responseText = `I couldn't connect to the AI service. Here are curated ideas instead:\n\n${getMockResponse(userMessage)}`;
     }
 
     const decorations = findDecorationMatch(responseText + ' ' + userMessage);

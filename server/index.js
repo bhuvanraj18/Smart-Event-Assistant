@@ -10,9 +10,9 @@ import dotenv from 'dotenv';
 import express from 'express';
 import helmet from 'helmet';
 import connectDB from './config/db.js';
-import authRoutes from './routes/authRoutes.js';
-import Vendor from './models/Vendor.js';
 import BudgetPlan from './models/BudgetPlan.js';
+import Vendor from './models/Vendor.js';
+import authRoutes from './routes/authRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -42,18 +42,36 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 app.use(helmet({ crossOriginResourcePolicy: false }));
+
+// Request Logging Middleware
+app.use((req, res, next) => {
+  console.log(`📡 [${req.method}] ${req.path}`);
+  next();
+});
+
+// Error handler for JSON parsing
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    console.error('❌ JSON Parse Error:', err.message);
+    return res.status(400).json({ error: 'Invalid JSON' });
+  }
+  next(err);
+});
+
 app.use('/api/auth', authRoutes);
 
 // ========================================
 // GEMINI AI INITIALIZATION & DEBUGGING
 // ========================================
 
+const DEFAULT_GEMINI_MODEL = 'models/gemini-2.5-flash';
+
 console.log('📋 Environment Configuration:');
 console.log(`   NODE_ENV: ${process.env.NODE_ENV || 'not set'}`);
 console.log(`   PORT: ${process.env.PORT || '5000'}`);
 console.log(`   GEMINI_API_KEY: ${process.env.GEMINI_API_KEY ? '✅ LOADED' : '❌ NOT SET'}`);
 console.log(`   API_KEY Length: ${process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : '0'} characters`);
-console.log(`   GEMINI_MODEL: ${process.env.GEMINI_MODEL || 'gemini-pro'}`);
+console.log(`   GEMINI_MODEL: ${process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL}`);
 console.log(`   FRONTEND_URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}\n`);
 
 // Initialize Gemini AI
@@ -178,10 +196,10 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    console.log('🤖 Initializing Gemini model: ' + (process.env.GEMINI_MODEL || 'gemini-pro'));
+    console.log('🤖 Initializing Gemini model: ' + (process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL));
 
     // Initialize Gemini model
-    const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-pro' });
+    const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL });
 
     console.log('💬 Creating chat session with system prompt');
 
@@ -329,7 +347,7 @@ app.post('/api/budget', async (req, res) => {
       });
     }
 
-    const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-pro' });
+    const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL });
 
     const budgetPrompt = `Act as an expert event planner. The user wants to plan a ${eventType} for ${guestCount} guests with a budget of $${budget}. 
     Provide a concise, categorized budget breakdown and 3 creative ideas to save money. 

@@ -110,67 +110,70 @@ async function generateGLB(type){
 }
 
 async function imageToGLB(src){
-  const prompt = `Analyse this decoration/event image and return ONLY a JSON array of objects. 
-Each object must have these fields:
-  shape   — one of: box, sphere, cylinder, cone, torus
-  color   — descriptive color name (e.g. "gold", "pink", "white")
-  width   — width in metres (0.05 – 2.0)
-  height  — height in metres (0.05 – 2.0)
-  depth   — depth in metres (0.05 – 1.0)
-  x       — horizontal centre position in metres (-2 to 2)
-  y       — vertical centre position in metres (0 to 3)
-  z       — depth position in metres (-1 to 1, background items negative)
-  metalness — 0.0 to 1.0 (shiny = high)
-  roughness — 0.0 to 1.0 (matte = high)
-
-Describe 6–14 objects that together represent what is in the image in 3D.
-Reply with the raw JSON array only — no markdown, no explanation.`;
-
-  let objects;
+  // Create a scene with the decoration image displayed as a billboard
+  const textureLoader = new THREE.TextureLoader();
   
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: src.split(',')[1] } },
-            { type: 'text', text: prompt },
-          ],
-        }],
-      }),
-    });
-    const data = await response.json();
-    const text = data.content?.find(b => b.type === 'text')?.text ?? '[]';
-    objects = JSON.parse(text.replace(/```json|```/g, '').trim());
-  } catch (err) {
-    console.error('Claude scene analysis failed, using fallback', err);
-    objects = [
-      { shape: 'box',    color: 'pink',  width: 1.2, height: 0.05, depth: 1.2, x: 0, y: 0,    z: 0 },
-      { shape: 'sphere', color: 'gold',  width: 0.4, height: 0.4,  depth: 0.4, x: 0, y: 0.45, z: 0, metalness: 0.7, roughness: 0.2 },
-      { shape: 'box',    color: 'white', width: 0.8, height: 0.8,  depth: 0.05, x: 0, y: 0.7,  z: -0.5 },
-    ];
-  }
-
-  const scene = new THREE.Scene();
-  objects.forEach(o => scene.add(primitiveFor(o)));
-  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-  const dir = new THREE.DirectionalLight(0xffffff, 1.2);
-  dir.position.set(5, 8, 5);
-  scene.add(dir);
-
   return new Promise((resolve, reject) => {
-    const exporter = new GLTFExporter();
-    exporter.parse(
-      scene,
-      glb => resolve(URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }))),
-      err => { console.error('GLB export error:', err); reject(err); },
-      { binary: true }
-    );
+    try {
+      textureLoader.load(src, (texture) => {
+        const scene = new THREE.Scene();
+        
+        // Create a plane (billboard) to display the decoration image
+        const geometry = new THREE.PlaneGeometry(2, 2);
+        const material = new THREE.MeshBasicMaterial({ map: texture });
+        const plane = new THREE.Mesh(geometry, material);
+        plane.position.z = 0;
+        scene.add(plane);
+        
+        // Add a backing platform/stage
+        const stageMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(3, 0.05, 2),
+          new THREE.MeshStandardMaterial({ color: 0xf0f0f0 })
+        );
+        stageMesh.position.y = -1.2;
+        scene.add(stageMesh);
+        
+        // Add lights
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+        dir.position.set(5, 8, 5);
+        scene.add(dir);
+        
+        // Export to GLB
+        const exporter = new GLTFExporter();
+        exporter.parse(
+          scene,
+          glb => resolve(URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }))),
+          err => { console.error('GLB export error:', err); reject(err); },
+          { binary: true }
+        );
+      }, undefined, (err) => {
+        console.error('Texture load error:', err);
+        // Fallback: create a simple colored scene
+        const scene = new THREE.Scene();
+        const fallbackObjects = [
+          { shape: 'box',    color: 'pink',  width: 1.2, height: 0.05, depth: 1.2, x: 0, y: 0,    z: 0 },
+          { shape: 'sphere', color: 'gold',  width: 0.4, height: 0.4,  depth: 0.4, x: 0, y: 0.45, z: 0, metalness: 0.7, roughness: 0.2 },
+          { shape: 'box',    color: 'white', width: 0.8, height: 0.8,  depth: 0.05, x: 0, y: 0.7,  z: -0.5 },
+        ];
+        fallbackObjects.forEach(o => scene.add(primitiveFor(o)));
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const d = new THREE.DirectionalLight(0xffffff, 1.2);
+        d.position.set(5, 8, 5);
+        scene.add(d);
+        
+        const exporter = new GLTFExporter();
+        exporter.parse(
+          scene,
+          glb => resolve(URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }))),
+          e => reject(e),
+          { binary: true }
+        );
+      });
+    } catch (err) {
+      console.error('ImageToGLB error:', err);
+      reject(err);
+    }
   });
 }
 
@@ -241,8 +244,42 @@ const ARViewerPage = ({ externalImage, onClearExternal }) => {
   const clearUpload = () => { setUploadedImage(null); onClearExternal?.(); setLoading(true); generateGLB(selectedModel).then(u=>{setModelUrl(u);setLoading(false);}); };
   const launchNativeAR = useCallback(() => { modelViewerRef.current?.activateAR?.(); }, []);
 
+  const getCameraErrorMessage = (error) => {
+    switch (error?.name) {
+      case 'NotAllowedError':
+        return 'Camera access is blocked. Allow camera permission for this site, then try Desktop Camera again.';
+      case 'NotFoundError':
+        return 'No camera was found on this device.';
+      case 'NotReadableError':
+        return 'The camera is already in use by another app or browser tab.';
+      case 'OverconstrainedError':
+        return 'Your camera does not support the requested settings.';
+      case 'SecurityError':
+        return 'Camera access requires a secure context or browser permission.';
+      default:
+        return error?.message ? `Could not access camera: ${error.message}` : 'Could not access camera.';
+    }
+  };
+
   const startCamera = async () => {
     setCameraError('');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Camera access is not available in this browser.');
+      return;
+    }
+
+    try {
+      if (navigator.permissions?.query) {
+        const permission = await navigator.permissions.query({ name: 'camera' });
+        if (permission.state === 'denied') {
+          setCameraError('Camera permission is blocked in this browser. Allow it from the address bar or site settings, then retry.');
+          return;
+        }
+      }
+    } catch {
+      // Some browsers do not support querying camera permission; fall back to getUserMedia.
+    }
+
     setArPhase('scan');
     setScanProgress(0);
     const tries = [
@@ -251,9 +288,23 @@ const ARViewerPage = ({ externalImage, onClearExternal }) => {
       { video: true },
     ];
     let stream = null;
-    for (const c of tries) { try { stream = await navigator.mediaDevices.getUserMedia(c); break; } catch (e) { console.warn(e.message); } }
-    if (stream) { streamRef.current = stream; setCameraActive(true); }
-    else { setCameraError('Could not access camera.'); }
+    let lastError = null;
+    for (const c of tries) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(c);
+        break;
+      } catch (error) {
+        lastError = error;
+        console.warn(error);
+      }
+    }
+    if (stream) {
+      streamRef.current = stream;
+      setCameraActive(true);
+      return;
+    }
+
+    setCameraError(getCameraErrorMessage(lastError));
   };
 
   useEffect(() => {
@@ -333,7 +384,7 @@ const ARViewerPage = ({ externalImage, onClearExternal }) => {
                 </div>
               )}
               {modelUrl && (
-                <model-viewer ref={modelViewerRef} src={modelUrl} ar ar-modes="webxr scene-viewer quick-look" ar-scale="auto" camera-controls touch-action="pan-y" auto-rotate shadow-intensity="1.2" shadow-softness="1" environment-image="neutral" exposure="1.2" camera-orbit="30deg 65deg auto" style={{width:'100%',height:'100%',background:'transparent'}}>
+                <model-viewer ref={modelViewerRef} src={modelUrl} ar ar-modes="webxr scene-viewer quick-look" ar-scale="auto" camera-controls touch-action="pan-y" shadow-intensity="1.2" shadow-softness="1" environment-image="neutral" exposure="1.2" camera-orbit="30deg 65deg auto" style={{width:'100%',height:'100%',background:'transparent'}}>
                   <button slot="ar-button" style={{position:'absolute',bottom:16,left:'50%',transform:'translateX(-50%)',padding:'0.85rem 2.2rem',border:'none',cursor:'pointer',background:'var(--bg-dark)',color:'white',fontWeight:700,fontSize:'0.85rem',fontFamily:'Inter,sans-serif',letterSpacing:'0.05em',textTransform:'uppercase',display:'flex',alignItems:'center',gap:'0.6rem',zIndex:10}}>
                     <Camera size={16}/> View in Your Space
                   </button>
@@ -418,7 +469,7 @@ const ARViewerPage = ({ externalImage, onClearExternal }) => {
 
           {arPhase === 'placed' && modelUrl && (
             <div style={{position:'absolute',left:modelPos.x,top:modelPos.y,transform:'translate(-50%,-50%)',width:modelSize,height:modelSize,zIndex:3,pointerEvents:'none',transition:'left 0.05s linear,top 0.05s linear'}}>
-              <model-viewer src={modelUrl} interaction-prompt="none" shadow-intensity="0.8" exposure="1.5" environment-image="neutral" auto-rotate rotation-per-second="15deg" camera-orbit="0deg 65deg auto" disable-tap disable-zoom style={{width:'100%',height:'100%',background:'transparent','--poster-color':'transparent',pointerEvents:'none'}}/>
+              <model-viewer src={modelUrl} interaction-prompt="none" shadow-intensity="0.8" exposure="1.5" environment-image="neutral" camera-orbit="0deg 65deg auto" disable-tap disable-zoom style={{width:'100%',height:'100%','--poster-color':'transparent',pointerEvents:'none'}}/>
               <div style={{position:'absolute',bottom:'5%',left:'50%',transform:'translateX(-50%)',width:'60%',height:12,background:'radial-gradient(ellipse,rgba(0,0,0,0.35) 0%,transparent 70%)',borderRadius:'50%',filter:'blur(4px)'}}/>
             </div>
           )}
