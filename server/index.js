@@ -1,9 +1,8 @@
 // ========================================
 // EVENT GENIE AI - CHATBOT BACKEND
-// Node.js + Express.js + Google Gemini API
-// ======================================== 
+// Node.js + Express.js + Groq AI API
+// ========================================
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -71,34 +70,56 @@ app.use((err, req, res, next) => {
 app.use('/api/auth', authRoutes);
 
 // ========================================
-// GEMINI AI INITIALIZATION & DEBUGGING
+// GROQ AI CONFIGURATION
 // ========================================
 
-const DEFAULT_GEMINI_MODEL = 'models/gemini-2.0-flash-lite';
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const DEFAULT_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
 console.log('📋 Environment Configuration:');
 console.log(`   NODE_ENV: ${process.env.NODE_ENV || 'not set'}`);
 console.log(`   PORT: ${process.env.PORT || '5000'}`);
-console.log(`   GEMINI_API_KEY: ${process.env.GEMINI_API_KEY ? '✅ LOADED' : '❌ NOT SET'}`);
-console.log(`   API_KEY Length: ${process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : '0'} characters`);
-console.log(`   GEMINI_MODEL: ${process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL}`);
+console.log(`   GROQ_API_KEY: ${process.env.GROQ_API_KEY ? '✅ LOADED' : '❌ NOT SET'}`);
+console.log(`   API_KEY Length: ${process.env.GROQ_API_KEY ? process.env.GROQ_API_KEY.length : '0'} characters`);
+console.log(`   GROQ_MODEL: ${DEFAULT_MODEL}`);
 console.log(`   FRONTEND_URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}\n`);
 
-// Initialize Gemini AI
-let genAI;
-try {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not set in .env file');
-  }
-  genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  console.log('✅ Google Generative AI initialized successfully\n');
-} catch (error) {
-  console.error('❌ Failed to initialize Gemini AI:', error.message);
-  console.error('   Make sure GEMINI_API_KEY is set in your .env file\n');
+if (!process.env.GROQ_API_KEY) {
+  console.error('❌ GROQ_API_KEY is not set in .env file');
+} else {
+  console.log('✅ Groq AI configured successfully\n');
 }
 
 // EVENT GENIE SYSTEM PROMPT
 const EVENT_GENIE_SYSTEM_PROMPT = `You are Event Genie AI, a smart event management assistant. Help users with event planning, decoration ideas, budget suggestions, venue recommendations, catering ideas, guest management, schedules, and vendor suggestions. Reply professionally and briefly. If the question is unrelated to events, politely refuse.`;
+
+// ========================================
+// Groq API Helper
+// ========================================
+
+async function callGroq(messages, { maxTokens = 500, temperature = 0.7 } = {}) {
+  const response = await fetch(GROQ_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: DEFAULT_MODEL,
+      messages,
+      max_tokens: maxTokens,
+      temperature,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Groq API ${response.status}: ${errorBody}`);
+  }
+
+  const data = await response.json();
+  return data.choices[0]?.message?.content || '';
+}
 
 // ========================================
 // API ENDPOINTS
@@ -112,41 +133,36 @@ app.get('/api/models', async (req, res) => {
   console.log('📡 [GET] /api/models - Listing available models');
 
   try {
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({
-        error: 'GEMINI_API_KEY not configured'
-      });
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(500).json({ error: 'GROQ_API_KEY not configured' });
     }
 
-    // Use REST API to list models
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`
-    );
+    const response = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
+    });
 
     if (!response.ok) {
       throw new Error(`API returned ${response.status}: ${response.statusText}`);
     }
 
     const data = await response.json();
-    const models = data.models || [];
+    const models = data.data || [];
 
     console.log(`✅ Available models: ${models.length}`);
-    models.slice(0, 10).forEach(m => console.log(`   - ${m.displayName} (${m.name})`));
+    models.slice(0, 10).forEach(m => console.log(`   - ${m.id}`));
 
     res.status(200).json({
       count: models.length,
       models: models.map(m => ({
-        name: m.name,
-        displayName: m.displayName,
-        description: m.description
-      }))
+        name: m.id,
+        displayName: m.id,
+        ownedBy: m.owned_by,
+      })),
     });
 
   } catch (error) {
     console.error('❌ Error listing models:', error.message);
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -159,9 +175,10 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
     message: 'Event Genie API is running',
-    geminiInitialized: !!genAI,
-    apiKeyLoaded: !!process.env.GEMINI_API_KEY,
-    timestamp: new Date().toISOString()
+    aiProvider: 'Groq',
+    aiModel: DEFAULT_MODEL,
+    apiKeyLoaded: !!process.env.GROQ_API_KEY,
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -177,142 +194,76 @@ app.post('/api/chat', async (req, res) => {
   console.log('========================================');
 
   try {
-    // Extract message from request body
     const { message } = req.body;
-
     console.log(`📝 User message: "${message}"`);
 
-    // Validation: Check if message exists
+    // Validation
     if (!message || typeof message !== 'string') {
       console.error('❌ Validation Error: Invalid message format');
-      return res.status(400).json({
-        error: 'Invalid request. Please provide a "message" field.'
-      });
+      return res.status(400).json({ error: 'Invalid request. Please provide a "message" field.' });
     }
 
-    // Validation: Check if Gemini is initialized
-    if (!genAI) {
-      console.error('❌ Error: Gemini AI not initialized');
-      return res.status(500).json({
-        error: 'AI service not initialized'
-      });
+    if (!process.env.GROQ_API_KEY) {
+      console.error('❌ Error: GROQ_API_KEY is not configured');
+      return res.status(500).json({ reply: 'AI service temporarily unavailable. API key not configured.' });
     }
 
-    // Validation: Check if API key is configured
-    if (!process.env.GEMINI_API_KEY) {
-      console.error('❌ Error: GEMINI_API_KEY is not configured');
-      return res.status(500).json({
-        reply: 'AI service temporarily unavailable. API key not configured.'
-      });
-    }
+    console.log(`🤖 Using Groq model: ${DEFAULT_MODEL}`);
 
-    const modelName = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
-    console.log('🤖 Initializing Gemini model: ' + modelName);
+    // Build messages array with system prompt
+    const messages = [
+      { role: 'system', content: EVENT_GENIE_SYSTEM_PROMPT },
+      { role: 'user', content: message },
+    ];
 
-    // Initialize Gemini model
-    const model = genAI.getGenerativeModel({ model: modelName });
-
-    console.log('💬 Creating chat session with system prompt');
-
-    // Create chat session with system prompt
-    const chat = model.startChat({
-      systemInstruction: {
-        parts: [{ text: EVENT_GENIE_SYSTEM_PROMPT }]
-      },
-      generationConfig: {
-        maxOutputTokens: 500,
-        temperature: 0.7
-      }
-    });
-
-    // Retry logic with exponential backoff for 429 rate-limit errors
+    // Retry logic with exponential backoff
     const MAX_RETRIES = 3;
-    let result;
+    let reply = '';
     let lastError;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        console.log(`⏳ Attempt ${attempt}/${MAX_RETRIES}: Sending message to Gemini API...`);
-        result = await chat.sendMessage(message);
-        console.log('📨 sendMessage() completed');
+        console.log(`⏳ Attempt ${attempt}/${MAX_RETRIES}: Sending to Groq API...`);
+        reply = await callGroq(messages);
+        console.log(`✅ Response received (${reply.length} chars)`);
         lastError = null;
-        break; // Success — exit retry loop
-      } catch (sendErr) {
-        lastError = sendErr;
-        const is429 = sendErr.message?.includes('429') || sendErr.message?.includes('RESOURCE_EXHAUSTED') || sendErr.message?.includes('rate');
-        if (is429 && attempt < MAX_RETRIES) {
-          const waitMs = Math.pow(2, attempt) * 1000; // 2s, 4s
+        break;
+      } catch (err) {
+        lastError = err;
+        const isRateLimit = err.message?.includes('429') || err.message?.includes('rate');
+        if (isRateLimit && attempt < MAX_RETRIES) {
+          const waitMs = Math.pow(2, attempt) * 1000;
           console.warn(`⏱️  Rate limited (attempt ${attempt}). Retrying in ${waitMs / 1000}s...`);
           await new Promise(resolve => setTimeout(resolve, waitMs));
         } else {
-          console.error(`❌ sendMessage() failed (attempt ${attempt}):`, sendErr.message);
-          throw sendErr;
+          console.error(`❌ Failed (attempt ${attempt}):`, err.message);
+          throw err;
         }
       }
     }
 
-    let response;
-    try {
-      response = await result.response;
-      console.log('📨 result.response completed');
-    } catch (respErr) {
-      console.error('❌ result.response failed:', respErr.message);
-      throw respErr;
-    }
+    console.log(`✅ Groq Response: "${reply.substring(0, 100)}${reply.length > 100 ? '...' : ''}"`);
 
-    let reply;
-    try {
-      reply = response.text();
-      console.log(`✅ response.text() completed (${reply.length} chars)`);
-    } catch (textErr) {
-      console.error('❌ response.text() failed:', textErr.message);
-      throw textErr;
-    }
-
-    console.log(`✅ Gemini Response received (${reply.length} characters):`);
-    console.log(`   "${reply.substring(0, 100)}${reply.length > 100 ? '...' : ''}"`);
-
-    // Return success response
     res.status(200).json({
-      reply: reply,
-      timestamp: new Date().toISOString()
+      reply,
+      timestamp: new Date().toISOString(),
     });
 
     console.log('✅ Response sent to frontend\n');
 
   } catch (error) {
-    // Error Handling with detailed logging
     console.error('\n❌ ERROR in /api/chat:');
     console.error(`   Message: ${error.message}`);
-    console.error(`   Type: ${error.constructor.name}`);
     console.error(`   Stack: ${error.stack}\n`);
 
-    // Handle specific error types
-    if (error.message.includes('API key') || error.message.includes('401')) {
-      console.error('🔑 Issue: Invalid or incorrect API key');
-      return res.status(500).json({
-        reply: 'AI service temporarily unavailable. Please check API key configuration.'
-      });
+    if (error.message.includes('401') || error.message.includes('API key')) {
+      return res.status(500).json({ reply: 'AI service temporarily unavailable. Please check API key.' });
+    }
+    if (error.message.includes('429') || error.message.includes('rate')) {
+      return res.status(429).json({ reply: 'Rate limit exceeded. Please try again in a few moments.' });
     }
 
-    if (error.message.includes('rate limit') || error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED')) {
-      console.error('⏱️  Issue: Rate limit exceeded after retries');
-      return res.status(429).json({
-        reply: 'Rate limit exceeded. Please try again in a few moments.'
-      });
-    }
-
-    if (error.message.includes('ECONNREFUSED') || error.message.includes('network')) {
-      console.error('🌐 Issue: Network connection failed');
-      return res.status(500).json({
-        reply: 'Network connection failed. Please check your internet connection.'
-      });
-    }
-
-    // Generic error response
-    return res.status(500).json({
-      reply: 'AI service temporarily unavailable. Please try again later.'
-    });
+    return res.status(500).json({ reply: 'AI service temporarily unavailable. Please try again later.' });
   }
 });
 
@@ -359,29 +310,27 @@ app.post('/api/budget', async (req, res) => {
     // Validation
     if (!budget || !eventType || !guestCount) {
       console.error('❌ Validation Error: Missing required fields');
-      return res.status(400).json({
-        error: 'Please provide budget, eventType, and guestCount'
-      });
+      return res.status(400).json({ error: 'Please provide budget, eventType, and guestCount' });
     }
 
-    if (!genAI) {
-      console.error('❌ Error: Gemini AI not initialized');
-      return res.status(500).json({
-        error: 'AI service not initialized'
-      });
+    if (!process.env.GROQ_API_KEY) {
+      console.error('❌ Error: GROQ_API_KEY not configured');
+      return res.status(500).json({ error: 'AI service not initialized' });
     }
-
-    const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL });
 
     const budgetPrompt = `Act as an expert event planner. The user wants to plan a ${eventType} for ${guestCount} guests with a budget of $${budget}. 
     Provide a concise, categorized budget breakdown and 3 creative ideas to save money. 
-    Format your response as a JSON array where each object has: "category", "allocatedAmount", "percentage", and "tips".`;
+    Format your response as a JSON array where each object has: "category", "allocatedAmount", "percentage", and "tips".
+    Return ONLY the JSON array, no markdown formatting.`;
 
-    console.log('⏳ Generating budget breakdown from Gemini...');
+    console.log('⏳ Generating budget breakdown from Groq...');
 
-    const result = await model.generateContent(budgetPrompt);
-    const response = await result.response;
-    const text = response.text();
+    const messages = [
+      { role: 'system', content: 'You are an expert event planner. Respond only with valid JSON arrays.' },
+      { role: 'user', content: budgetPrompt },
+    ];
+
+    const text = await callGroq(messages, { maxTokens: 1000, temperature: 0.5 });
 
     console.log(`✅ Budget response received (${text.length} characters)`);
 
@@ -396,26 +345,24 @@ app.post('/api/budget', async (req, res) => {
         eventType,
         guestCount,
         totalBudget: budget,
-        breakdown
+        breakdown,
       });
       console.log('✅ Budget plan saved to MongoDB');
     } catch (dbErr) {
-      console.error('⚠️ Could not save to DB (perhaps MongoDB is not connected):', dbErr.message);
+      console.error('⚠️ Could not save to DB:', dbErr.message);
     }
 
     res.status(200).json({
-      breakdown: breakdown,
+      breakdown,
       savedPlanId: savedPlan ? savedPlan._id : null,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
 
     console.log('✅ Budget breakdown sent to frontend\n');
 
   } catch (error) {
     console.error('❌ Budget API Error:', error.message);
-    res.status(500).json({
-      error: 'Failed to generate budget plan'
-    });
+    res.status(500).json({ error: 'Failed to generate budget plan' });
   }
 });
 
@@ -428,7 +375,7 @@ app.use((req, res) => {
   res.status(404).json({
     error: 'Endpoint not found',
     path: req.path,
-    method: req.method
+    method: req.method,
   });
 });
 
