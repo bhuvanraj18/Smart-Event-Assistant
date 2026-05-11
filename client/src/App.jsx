@@ -11,6 +11,7 @@ import { ForgotPasswordPage, LoginPage, ResetPasswordPage, SignupPage } from './
 import BudgetPlanner from './pages/BudgetPlanner';
 import CategoryProviders from './pages/CategoryProviders';
 import DashboardPage from './pages/DashboardPage';
+import BookingPage from './pages/BookingPage';
 import Home from './pages/Home';
 import ProvidersPage from './pages/ProvidersPage';
 
@@ -66,6 +67,7 @@ function HomePage() {
 function App() {
   const location = useLocation();
   const isAuthRoute = ['/login', '/signup', '/forgot-password', '/reset-password', '/dashboard'].some((path) => location.pathname.startsWith(path));
+  const isBookingRoute = location.pathname === '/booking';
 
   return (
     <>
@@ -89,6 +91,7 @@ function App() {
           <Route path="/providers" element={<ProvidersPage />} />
           <Route path="/providers/:category" element={<CategoryProviders />} />
           <Route path="/ar-builder" element={<ARDecorationBuilder />} />
+          <Route path="/booking" element={<BookingPage />} />
         </Routes>
       </main>
       {!isAuthRoute && <Footer />}

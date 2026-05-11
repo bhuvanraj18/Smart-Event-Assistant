@@ -255,7 +255,26 @@ const CategoryProviders = () => {
                       <span className="vc-price-label">Starting at</span>
                       <span className="vc-price-value">{vendor.price}</span>
                     </div>
-                    <button className="vc-book-btn">Book Now</button>
+                    <button
+                      className="vc-book-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate('/booking', {
+                          state: {
+                            vendor: {
+                              id: vendor.id,
+                              name: vendor.name,
+                              type: vendor.type,
+                              price: vendor.price,
+                              rating: vendor.rating,
+                              category: meta.name,
+                            },
+                          },
+                        });
+                      }}
+                    >
+                      Book Now
+                    </button>
                   </div>
                 </div>
               </div>

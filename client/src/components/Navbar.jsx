@@ -8,6 +8,7 @@ const navLinks = [
   { name: 'Planner', href: '#ai-chat' },
   { name: 'Budget', href: '#budget' },
   { name: 'AR Preview', href: '#ar-preview' },
+  { name: 'Book Now', href: '/booking', isRoute: true },
 ];
 
 const Navbar = () => {
@@ -19,6 +20,24 @@ const Navbar = () => {
   const { user, logout, loading } = useAuth();
 
   const isHomePage = location.pathname === '/';
+
+  const scrollToSection = (targetId) => {
+    const cleanTargetId = targetId?.startsWith('#') ? targetId.slice(1) : targetId;
+    const targetElement = document.getElementById(cleanTargetId);
+
+    if (!targetElement) return false;
+
+    requestAnimationFrame(() => {
+      targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      try {
+        window.history.replaceState({}, '', `#${cleanTargetId}`);
+      } catch {
+        // Ignore history updates when the browser blocks them.
+      }
+    });
+
+    return true;
+  };
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 60);
@@ -47,17 +66,23 @@ const Navbar = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, [isHomePage]);
 
-  const handleClick = (href) => {
+  const handleClick = (href, isRoute) => {
     setMobileOpen(false);
 
-    if (isHomePage) {
-      // On homepage — smooth scroll
-      document.querySelector(href)?.scrollIntoView({ behavior: 'smooth' });
-    } else {
-      // On other pages — navigate home and pass the desired section
-      const targetId = href?.startsWith('#') ? href.slice(1) : href;
-      navigate('/', { state: { scrollTarget: targetId } });
+    // Direct route navigation (e.g. /booking)
+    if (isRoute) {
+      navigate(href);
+      return;
     }
+
+    const targetId = href?.startsWith('#') ? href.slice(1) : href;
+
+    if (isHomePage && scrollToSection(targetId)) {
+      return;
+    }
+
+    // On other pages, or when the target is not mounted yet, navigate home and let the landing page handle the scroll.
+    navigate('/', { state: { scrollTarget: targetId } });
   };
 
   const handleBrandClick = () => {
@@ -79,9 +104,10 @@ const Navbar = () => {
     }
   };
 
-  // Provider pages have hero banners too — keep transparent until scrolled
+  // Pages with dark hero banners — keep navbar transparent until scrolled
   const isProviderPage = location.pathname.startsWith('/providers');
-  const hasHero = isHomePage || isProviderPage;
+  const isBookingPage = location.pathname === '/booking';
+  const hasHero = isHomePage || isProviderPage || isBookingPage;
   const navClass = `navbar ${scrolled ? 'scrolled' : hasHero ? 'on-dark' : 'scrolled'}`;
 
   return (
@@ -102,8 +128,8 @@ const Navbar = () => {
             <a
               key={link.name}
               href={link.href}
-              onClick={(e) => { e.preventDefault(); handleClick(link.href); }}
-              className={`nav-link ${activeSection === link.href.slice(1) ? 'active' : ''}`}
+              onClick={(e) => { e.preventDefault(); handleClick(link.href, link.isRoute); }}
+              className={`nav-link ${activeSection === link.href.slice(1) ? 'active' : ''} ${link.isRoute && location.pathname === link.href ? 'active' : ''}`}
             >
               {link.name}
             </a>
@@ -144,9 +170,17 @@ const Navbar = () => {
             </>
           ))}
           <button
+            type="button"
             className="btn btn-primary btn-round"
             style={{ padding: '0.6rem 1.5rem', fontSize: '0.75rem' }}
-            onClick={() => handleClick('#ai-chat')}
+            onClick={() => {
+              setMobileOpen(false);
+              if (user) {
+                handleClick('#ai-chat');
+                return;
+              }
+              navigate('/login');
+            }}
           >
             Get Started
           </button>
@@ -174,8 +208,8 @@ const Navbar = () => {
             <a
               key={link.name}
               href={link.href}
-              onClick={(e) => { e.preventDefault(); handleClick(link.href); }}
-              className={`nav-link ${activeSection === link.href.slice(1) ? 'active' : ''}`}
+              onClick={(e) => { e.preventDefault(); handleClick(link.href, link.isRoute); }}
+              className={`nav-link ${activeSection === link.href.slice(1) ? 'active' : ''} ${link.isRoute && location.pathname === link.href ? 'active' : ''}`}
             >
               {link.name}
             </a>
