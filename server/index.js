@@ -29,10 +29,20 @@ const app = express();
 // ========================================
 
 // CORS Configuration
+const allowedOrigins = process.env.NODE_ENV === 'production'
+  ? [process.env.FRONTEND_URL].filter(Boolean)
+  : ['http://localhost:5173', 'http://localhost:5174'];
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? process.env.FRONTEND_URL
-    : ['http://localhost:5173', 'http://localhost:5174'],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    // Allow any vercel.app preview/production URL
+    if (origin.endsWith('.vercel.app')) return callback(null, true);
+    // Allow configured origins
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -64,7 +74,7 @@ app.use('/api/auth', authRoutes);
 // GEMINI AI INITIALIZATION & DEBUGGING
 // ========================================
 
-const DEFAULT_GEMINI_MODEL = 'models/gemini-2.5-flash';
+const DEFAULT_GEMINI_MODEL = 'models/gemini-2.0-flash-lite';
 
 console.log('📋 Environment Configuration:');
 console.log(`   NODE_ENV: ${process.env.NODE_ENV || 'not set'}`);
@@ -196,10 +206,11 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    console.log('🤖 Initializing Gemini model: ' + (process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL));
+    const modelName = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+    console.log('🤖 Initializing Gemini model: ' + modelName);
 
     // Initialize Gemini model
-    const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL });
+    const model = genAI.getGenerativeModel({ model: modelName });
 
     console.log('💬 Creating chat session with system prompt');
 
@@ -214,16 +225,30 @@ app.post('/api/chat', async (req, res) => {
       }
     });
 
-    console.log('⏳ Sending message to Gemini API...');
-
-    // Send user message and get response
+    // Retry logic with exponential backoff for 429 rate-limit errors
+    const MAX_RETRIES = 3;
     let result;
-    try {
-      result = await chat.sendMessage(message);
-      console.log('📨 sendMessage() completed');
-    } catch (sendErr) {
-      console.error('❌ sendMessage() failed:', sendErr.message);
-      throw sendErr;
+    let lastError;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log(`⏳ Attempt ${attempt}/${MAX_RETRIES}: Sending message to Gemini API...`);
+        result = await chat.sendMessage(message);
+        console.log('📨 sendMessage() completed');
+        lastError = null;
+        break; // Success — exit retry loop
+      } catch (sendErr) {
+        lastError = sendErr;
+        const is429 = sendErr.message?.includes('429') || sendErr.message?.includes('RESOURCE_EXHAUSTED') || sendErr.message?.includes('rate');
+        if (is429 && attempt < MAX_RETRIES) {
+          const waitMs = Math.pow(2, attempt) * 1000; // 2s, 4s
+          console.warn(`⏱️  Rate limited (attempt ${attempt}). Retrying in ${waitMs / 1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, waitMs));
+        } else {
+          console.error(`❌ sendMessage() failed (attempt ${attempt}):`, sendErr.message);
+          throw sendErr;
+        }
+      }
     }
 
     let response;
@@ -260,7 +285,6 @@ app.post('/api/chat', async (req, res) => {
     console.error('\n❌ ERROR in /api/chat:');
     console.error(`   Message: ${error.message}`);
     console.error(`   Type: ${error.constructor.name}`);
-    console.error(`   Full Error: ${JSON.stringify(error, null, 2)}`);
     console.error(`   Stack: ${error.stack}\n`);
 
     // Handle specific error types
@@ -271,8 +295,8 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    if (error.message.includes('rate limit') || error.message.includes('429')) {
-      console.error('⏱️  Issue: Rate limit exceeded');
+    if (error.message.includes('rate limit') || error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED')) {
+      console.error('⏱️  Issue: Rate limit exceeded after retries');
       return res.status(429).json({
         reply: 'Rate limit exceeded. Please try again in a few moments.'
       });
